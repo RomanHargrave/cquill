@@ -71,7 +71,7 @@ impl CqlFile {
             bytes::complete::tag,
             character::complete::{anychar, char, line_ending, one_of},
             combinator::{all_consuming, map, recognize},
-            error::{context, Error},
+            error::Error,
             multi::{many1, many_till},
             sequence::preceded,
             Parser,
@@ -89,34 +89,25 @@ impl CqlFile {
         let parse_result: IResult<LocatedSpan<&str>, Vec<Option<CqlStatement>>, Error<_>> =
             all_consuming(many1(alt((
                 // eat whitespace
-                context("read whitespace", map(many1(one_of("\n\r ")), |_| None)),
+                map(many1(one_of("\n\r ")), |_| None),
                 // line comment
-                context(
-                    "read line comment",
-                    map(preceded(tag("--"), many_till(anychar, line_ending)), |_| {
-                        None
-                    }),
-                ),
+                map(preceded(tag("--"), many_till(anychar, line_ending)), |_| {
+                    None
+                }),
                 // block comment
-                context(
-                    "read block comment",
-                    map(preceded(tag("/*"), many_till(anychar, tag("*/"))), |_| None),
-                ),
+                map(preceded(tag("/*"), many_till(anychar, tag("*/"))), |_| None),
                 // actual statement
-                context(
-                    "read statement",
-                    map(
-                        recognize(many_till(anychar, char(';'))),
-                        |lb: LocatedSpan<&str>| {
-                            let open_line = lb.location_line() as usize;
-                            let cql: String = lb.into_fragment().into();
-                            let line_count = cql.lines().count();
-                            Some(CqlStatement {
-                                lines: (open_line, open_line + line_count),
-                                cql,
-                            })
-                        },
-                    ),
+                map(
+                    recognize(many_till(anychar, char(';'))),
+                    |lb: LocatedSpan<&str>| {
+                        let open_line = lb.location_line() as usize;
+                        let cql: String = lb.into_fragment().into();
+                        let line_count = cql.lines().count();
+                        Some(CqlStatement {
+                            lines: (open_line, open_line + line_count),
+                            cql,
+                        })
+                    },
                 ),
             ))))
             .parse_complete(LocatedSpan::new(cql.as_str()));
