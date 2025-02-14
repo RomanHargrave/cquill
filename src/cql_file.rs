@@ -131,7 +131,7 @@ impl CqlFile {
             error: format!("Unable to parse migration file: {e}"),
         })?;
 
-        Ok(statements.into_iter().filter_map(|i| i).collect())
+        Ok(statements.into_iter().flatten().collect())
     }
 }
 
