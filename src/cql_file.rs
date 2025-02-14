@@ -2,8 +2,10 @@ use std::fmt::{Debug, Display, Formatter};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use lazy_static::lazy_static;
+use nom::IResult;
+use nom_locate::LocatedSpan;
 use regex::Regex;
 
 use crate::MigrateError;
@@ -51,9 +53,10 @@ impl CqlFile {
             .unwrap()
             .name("version")
             .unwrap()
-            .as_str()
-            .parse::<i16>()
-            .unwrap();
+            .as_str();
+        let version = version.parse::<i16>().with_context(|| {
+            format!("Migration file `{filename}` has invalid version `{version}`")
+        })?;
         Ok(CqlFile {
             filename,
             hash,
@@ -63,110 +66,88 @@ impl CqlFile {
     }
 
     pub(crate) fn read_statements(&self) -> Result<Vec<CqlStatement>, MigrateError> {
-        let cql = match fs::read_to_string(&self.path) {
-            Err(err) => {
-                return Err(MigrateError::CqlFileReadError {
-                    filename: self.filename.clone(),
-                    error: err.to_string(),
-                });
-            }
-            Ok(cql) => cql,
+        use nom::{
+            branch::alt,
+            bytes::complete::tag,
+            character::complete::{anychar, char, line_ending, one_of},
+            combinator::{all_consuming, map, recognize},
+            error::{context, Error},
+            multi::{many1, many_till},
+            sequence::preceded,
+            Parser,
         };
 
-        // todo parse an ast bc this is no bueno
-        let mut block_comment_begin: Option<usize> = None;
-        let mut comments: Vec<(usize, usize)> = Vec::new();
-        let mut line_comment_begin: Option<usize> = None;
-        let mut line_index = 0;
-        let mut prev_c: char = ' ';
-        let mut statement_begin_index: usize = 0;
-        let mut statement_begin_line: usize = 0;
-        let mut statements: Vec<CqlStatement> = Vec::new();
-        for (char_index, c) in cql.chars().enumerate() {
-            if c == '/' && prev_c == '*' {
-                if let Some(i) = block_comment_begin {
-                    comments.push((i, char_index + 1));
-                    block_comment_begin = None;
-                }
-            } else if c == '*' && prev_c == '/' && block_comment_begin.is_none() {
-                block_comment_begin = Some(char_index - 1);
-            } else if (c == '-' && prev_c == '-') || (c == '/' && prev_c == '/') {
-                line_comment_begin = Some(char_index - 1);
-            } else if c == '\n' {
-                line_index += 1;
-                if let Some(i) = line_comment_begin {
-                    line_comment_begin = None;
-                    comments.push((i, char_index));
-                }
-                let commented_line = if !comments.is_empty() {
-                    let mut uncommented_cql = false;
-                    let mut cursor = statement_begin_index;
-                    for (comment_start, comment_end) in &comments {
-                        if !cql[cursor..*comment_start].trim().to_string().is_empty() {
-                            uncommented_cql = true;
-                            break;
-                        }
-                        cursor = *comment_end;
-                    }
-                    if !uncommented_cql && !cql[cursor..char_index].trim().to_string().is_empty() {
-                        uncommented_cql = true;
-                    }
-                    if uncommented_cql {
-                        false
-                    } else {
-                        comments = Vec::new();
-                        true
-                    }
-                } else {
-                    cql[statement_begin_index..char_index].trim().is_empty()
-                };
-                if commented_line {
-                    statement_begin_index = char_index;
-                    statement_begin_line = line_index;
-                }
-            } else if c == ';' && block_comment_begin.is_none() && line_comment_begin.is_none() {
-                let statement = if comments.is_empty() {
-                    cql[statement_begin_index..char_index].to_string()
-                } else {
-                    let mut parts: Vec<String> = Vec::with_capacity(comments.len() + 1);
-                    let mut cursor = statement_begin_index;
-                    for (comment_start, comment_end) in &comments {
-                        parts.push(cql[cursor..*comment_start].trim().to_string());
-                        cursor = *comment_end;
-                    }
-                    parts.push(cql[cursor..char_index].trim().to_string());
-                    comments = Vec::new();
-                    parts.join(" ")
-                };
-                statements.push(CqlStatement {
-                    cql: statement,
-                    lines: (statement_begin_line + 1, line_index + 1),
-                });
-                statement_begin_index = char_index + 1;
-                statement_begin_line = line_index;
-            }
-            prev_c = c;
-        }
+        let cql = fs::read(&self.path).map_err(|e| MigrateError::CqlFileReadError {
+            filename: self.path.to_string_lossy().into(),
+            error: e.to_string(),
+        })?;
+        let cql = String::from_utf8(cql).map_err(|e| MigrateError::CqlFileReadError {
+            filename: self.path.to_string_lossy().into(),
+            error: format!("CQL file contains invalid UTF-8 sequence: {e}"),
+        })?;
 
-        Ok(statements
-            .iter()
-            .map(|statement| CqlStatement {
-                cql: statement.cql.lines().map(|l| l.trim()).collect(),
-                lines: statement.lines,
-            })
-            .collect())
+        let parse_result: IResult<LocatedSpan<&str>, Vec<Option<CqlStatement>>, Error<_>> =
+            all_consuming(many1(alt((
+                // eat whitespace
+                context("read whitespace", map(many1(one_of("\n\r ")), |_| None)),
+                // line comment
+                context(
+                    "read line comment",
+                    map(preceded(tag("--"), many_till(anychar, line_ending)), |_| {
+                        None
+                    }),
+                ),
+                // block comment
+                context(
+                    "read block comment",
+                    map(preceded(tag("/*"), many_till(anychar, tag("*/"))), |_| None),
+                ),
+                // actual statement
+                context(
+                    "read statement",
+                    map(
+                        recognize(many_till(anychar, char(';'))),
+                        |lb: LocatedSpan<&str>| {
+                            let open_line = lb.location_line() as usize;
+                            let cql: String = lb.into_fragment().into();
+                            let line_count = cql.lines().count();
+                            Some(CqlStatement {
+                                lines: (open_line, open_line + line_count),
+                                cql,
+                            })
+                        },
+                    ),
+                ),
+            ))))
+            .parse_complete(LocatedSpan::new(cql.as_str()));
+
+        // code _somewhere_ could actually iterate over a VerboseError
+        // from nom-language; however, it borrows the input text, and
+        // I do not care to make an elegant interface to propagate
+        // that information at this time.
+
+        let (_, statements) = parse_result.map_err(|e| MigrateError::CqlFileReadError {
+            filename: self.path.to_string_lossy().into(),
+            error: format!("Unable to parse migration file: {e}"),
+        })?;
+
+        Ok(statements.into_iter().filter_map(|i| i).collect())
     }
 }
 
 pub(crate) fn files_from_dir(cql_dir: &PathBuf) -> Result<Vec<CqlFile>> {
-    let cql_file_paths = read_cql_file_paths(cql_dir)?;
+    let cql_file_paths =
+        read_cql_file_paths(cql_dir).context("Failed to scan migration directory")?;
     let mut cql_files: Vec<CqlFile> = Vec::with_capacity(cql_file_paths.len());
     let mut expected_version: i16 = 1;
     for path in cql_file_paths {
-        let cql_file = CqlFile::from_path(path)?;
+        let cql_file = CqlFile::from_path(path.clone()).with_context(|| {
+            format!("Unable to create valid migration metadata for file `{path:?}`")
+        })?;
         if cql_file.version != expected_version {
             return if cql_file.version == expected_version - 1 {
-                let previous_index = usize::try_from(expected_version - 2)?;
+                let previous_index =
+                    usize::try_from(expected_version - 2).context("Previous index invalid")?;
                 let previous_filename = &cql_files.get(previous_index).unwrap().filename;
                 Err(anyhow!(
                     "{} and {} repeat versions instead of incrementing to v{:0>3}",

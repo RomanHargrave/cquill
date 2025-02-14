@@ -28,10 +28,13 @@ anyhow = "1.0.81"
 clap = { version = "4.5.3", features = ["derive", "env"] }
 lazy_static = "1.4.0"
 md5 = "0.7.0"
+nom = "8.0.0"
+nom_locate = "5.0.0"
 regex = "1.10.3"
 scylla = "0.15.0"
 thiserror = "1.0.58"
 tokio = { version = "1.36.0", features = ["full"] }
+tracing = "0.1.41"
 uuid = "1.7.0"
 
 [dev-dependencies]

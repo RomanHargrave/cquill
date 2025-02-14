@@ -3,6 +3,7 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use scylla::Session;
+use tracing::debug;
 
 use crate::cql_file::{CqlFile, CqlStatement};
 use crate::queries;
@@ -66,6 +67,7 @@ pub(crate) async fn perform(
         )
         .await?,
     );
+
     let mut not_migrated: Vec<(CqlFile, Vec<CqlStatement>)> = Vec::new();
     for cql_file in cql_files {
         if let Some(migrated_cql_file) = previously_migrated.pop_front() {
@@ -83,32 +85,38 @@ pub(crate) async fn perform(
         not_migrated.push((cql_file.clone(), cql));
     }
     let mut migrated: Vec<CqlFile> = Vec::new();
-    for cql in not_migrated {
-        for cql_statement in cql.1 {
+    for (cql_file, statements) in not_migrated {
+        for cql_statement in statements {
+            debug!(
+                migration = cql_file.filename,
+                ?cql_statement,
+                "evaluate migration statement"
+            );
+
             if let Err(err) = queries::exec(session, cql_statement.cql.clone()).await {
                 return Err(MigrateError::PartialMigration {
                     error_state: Box::from(MigrateErrorState {
                         error: err.to_string(),
                         failed_cql: Some(cql_statement),
-                        failed_file: cql.0,
+                        failed_file: cql_file,
                         migrated,
                     }),
                 });
             }
         }
-        migrated.push(cql.0.clone());
+        migrated.push(cql_file.clone());
         if let Err(err) = queries::migrated::files::insert(
             session,
             &args.history_keyspace,
             &args.history_table,
-            &cql.0,
+            &cql_file,
         )
         .await
         {
             return Err(MigrateError::HistoryUpdateFailed {
                 error_state: Box::from(MigrateErrorState {
                     error: err.to_string(),
-                    failed_file: cql.0,
+                    failed_file: cql_file,
                     failed_cql: None,
                     migrated,
                 }),

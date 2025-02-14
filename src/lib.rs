@@ -1,7 +1,8 @@
 use std::{path::PathBuf, str, sync::Arc};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use scylla::Session;
+use tracing::debug;
 
 pub use crate::cql_file::CqlFile;
 use crate::keyspace::*;
@@ -65,13 +66,17 @@ impl Migrator {
         let need_table = match table_names_from_session_metadata(session, &keyspace.name) {
             Ok(tables) => !tables.contains(&table),
             Err(_) => {
-                queries::keyspace::create(session, keyspace).await?;
+                queries::keyspace::create(session, keyspace)
+                    .await
+                    .context("Could not create migration keyspace")?;
                 true
             }
         };
 
         if need_table {
-            migrated::table::create(session, &keyspace.name, table).await?;
+            migrated::table::create(session, &keyspace.name, table)
+                .await
+                .context("Could not create migration table")?;
         }
 
         Ok(())
@@ -83,12 +88,17 @@ impl Migrator {
     /// method result contains a vec of the cql script paths executed during this invocation.
     pub async fn run_pending(self) -> Result<Vec<CqlFile>, MigrateError> {
         let discovered_migrations = cql_file::files_from_dir(&self.migrations_dir)?;
+
+        debug!(?discovered_migrations, "locate candidate migrations",);
+
         let keyspace = self
             .history_keyspace
             .unwrap_or_else(|| KeyspaceOpts::simple(KEYSPACE.into(), 1));
         let table = self.history_table.unwrap_or_else(|| TABLE.into());
 
-        Self::prepare_db(&self.session, &keyspace, &table).await?;
+        Self::prepare_db(&self.session, &keyspace, &table)
+            .await
+            .context("Prepare database failed")?;
 
         migrate::perform(
             &self.session,
