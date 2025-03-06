@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 use std::path::PathBuf;
 
 use anyhow::Result;
-use scylla::Session;
+use scylla::client::session::Session;
 use tracing::debug;
 
 use crate::cql_file::{CqlFile, CqlStatement};

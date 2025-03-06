@@ -7,7 +7,7 @@ use cquill::MigrateError::HistoryUpdateFailed;
 use cquill::{
     keyspace::*, CqlFile, MigrateError, MigrateError::PartialMigration, MigrateErrorState, Migrator,
 };
-use scylla::SessionBuilder;
+use scylla::client::session_builder::SessionBuilder;
 
 #[derive(Parser)]
 #[command(author, version, about)]

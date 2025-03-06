@@ -4,7 +4,7 @@ use std::str::{FromStr, Split};
 use anyhow::{anyhow, Result};
 use lazy_static::lazy_static;
 use regex::Regex;
-use scylla::Session;
+use scylla::client::session::Session;
 
 use crate::keyspace::ReplicationFactor::*;
 
@@ -130,14 +130,11 @@ pub(crate) fn table_names_from_session_metadata(
     session: &Session,
     keyspace_name: &String,
 ) -> Result<Vec<String>> {
-    let cluster_data = session.get_cluster_data();
-    match cluster_data
-        .get_keyspace_info()
-        .get(keyspace_name.to_lowercase().as_str())
-    {
-        None => Err(anyhow!("keyspace {keyspace_name} does not exist")),
-        Some(keyspace) => Ok(keyspace.tables.keys().cloned().collect()),
-    }
+    session
+        .get_cluster_state()
+        .get_keyspace(keyspace_name.to_lowercase().as_str())
+        .map(|keyspace| keyspace.tables.keys().cloned().collect())
+        .ok_or_else(|| anyhow!("keyspace {keyspace_name} not found"))
 }
 
 #[cfg(test)]

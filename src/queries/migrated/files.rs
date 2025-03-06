@@ -1,7 +1,7 @@
 use std::path::Path;
 
-use scylla::frame::value::CqlTimeuuid;
-use scylla::Session;
+use scylla::client::session::Session;
+use scylla::value::CqlTimeuuid;
 
 use crate::cql_file::CqlFile;
 use crate::queries::QueryError;

@@ -1,7 +1,7 @@
 use std::{path::PathBuf, str, sync::Arc};
 
 use anyhow::{Context, Result};
-use scylla::Session;
+use scylla::client::session::Session;
 use tracing::debug;
 
 pub use crate::cql_file::CqlFile;

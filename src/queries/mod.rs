@@ -1,7 +1,7 @@
+use scylla::client::session::Session;
 use scylla::deserialize::DeserializationError;
-use scylla::transport::errors::QueryError as ScyllaQueryError;
-use scylla::transport::query_result::{IntoRowsResultError, RowsError};
-use scylla::Session;
+use scylla::errors::ExecutionError as ScyllaQueryError;
+use scylla::response::query_result::{IntoRowsResultError, RowsError};
 
 use crate::keyspace::KeyspaceOpts;
 
