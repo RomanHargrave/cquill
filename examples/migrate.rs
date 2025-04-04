@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::process::exit;
 
 use cquill::*;
-use scylla::SessionBuilder;
+use scylla::client::session_builder::SessionBuilder;
 
 #[tokio::main]
 async fn main() {

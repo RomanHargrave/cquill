@@ -57,29 +57,64 @@ impl Migrator {
         }
     }
 
+    fn need_table(session: &Session, keyspace: &KeyspaceOpts, table: &String) -> bool {
+        match table_names_from_session_metadata(session, &keyspace.name) {
+            Ok(tables) => !tables.contains(&table),
+            Err(_) => true,
+        }
+    }
+
     async fn prepare_db(
         session: &Session,
         keyspace: &KeyspaceOpts,
         table: &String,
     ) -> Result<(), MigrateError> {
-        // look for the table, creating the keyspace as needed
-        let need_table = match table_names_from_session_metadata(session, &keyspace.name) {
-            Ok(tables) => !tables.contains(&table),
-            Err(_) => {
-                queries::keyspace::create(session, keyspace)
-                    .await
-                    .context("Could not create migration keyspace")?;
-                true
-            }
-        };
+        if Self::need_table(session, keyspace, table) {
+            queries::keyspace::create(session, keyspace)
+                .await
+                .context("Could not create migration keyspace")?;
 
-        if need_table {
             migrated::table::create(session, &keyspace.name, table)
                 .await
                 .context("Could not create migration table")?;
         }
 
         Ok(())
+    }
+
+    // TODO: the pending up-front mechanism should produce a structure which contains the pending
+    //   migrations, from which they can then be run, to avoid duplicate queries. This will require
+    //   pretty heavy refactoring of the code in migrate.rs, as cquill (appears to have) been initially
+    //   conceived first and foremost as a command-line utility.
+
+    pub async fn pending(&self) -> Result<Vec<CqlFile>> {
+        let keyspace = self
+            .history_keyspace
+            .clone()
+            .unwrap_or_else(|| KeyspaceOpts::simple(KEYSPACE.into(), 1));
+        let history_table = self.history_table.clone().unwrap_or_else(|| TABLE.into());
+
+        if Self::need_table(&self.session, &keyspace, &history_table) {
+            return Ok(Vec::default());
+        }
+
+        let inventory = cql_file::files_from_dir(&self.migrations_dir)?;
+
+        let discovered_pending: Vec<_> = migrate::find_pending(
+            &self.session,
+            &inventory,
+            migrate::MigrateArgs {
+                cql_dir: self.migrations_dir.clone(),
+                history_keyspace: keyspace.name,
+                history_table,
+            },
+        )
+        .await?
+        .into_iter()
+        .map(|(file, _)| file)
+        .collect();
+
+        Ok(discovered_pending)
     }
 
     /// performs a migration of all newly added cql scripts in [MigrateOpts::cql_dir]

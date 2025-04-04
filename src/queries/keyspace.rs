@@ -39,7 +39,7 @@ fn create_keyspace_cql(keyspace_opts: &KeyspaceOpts) -> Result<String, QueryErro
     };
     match replication {
         Ok(r) => Ok(format!(
-            "create keyspace {} with replication = {}",
+            "create keyspace if not exists {} with replication = {}",
             keyspace_opts.name, r
         )),
         Err(e) => Err(QueryError::from(anyhow!(

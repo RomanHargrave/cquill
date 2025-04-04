@@ -12,6 +12,7 @@ pub const REPLICATION: &str = "{ 'class': 'SimpleStrategy', 'replication_factor'
 
 /// KeyspaceOpts describes a keyspace managed by cquill with a keyspace name and
 /// [ReplicationFactor].
+#[derive(Clone)]
 pub struct KeyspaceOpts {
     pub name: String,
     /// The keyspace [ReplicationFactor] will default to a development environment setting using
@@ -29,6 +30,7 @@ impl KeyspaceOpts {
 }
 
 /// ReplicationFactor represents the strategy and data replication factor for a keyspace.
+#[derive(Clone)]
 pub enum ReplicationFactor {
     /// NetworkTopologyStrategy specifies how many replications will be placed in specific
     /// datacenters within the cluster.

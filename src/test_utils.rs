@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::{env, fs};
 
 use rand::Rng;
-use scylla::Session;
+use scylla::client::session::Session;
 use temp_dir::TempDir;
 
 use crate::cql_file::CqlFile;
@@ -24,7 +24,7 @@ pub(crate) fn make_file(path: PathBuf, content: &str) {
 
 pub(crate) async fn cql_session() -> Session {
     let node_address = env::var("CASSANDRA_NODE").expect("CASSANDRA_NODE must be set for tests");
-    scylla::SessionBuilder::new()
+    scylla::client::session_builder::SessionBuilder::new()
         .known_node(node_address)
         .build()
         .await

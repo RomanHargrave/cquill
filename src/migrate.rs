@@ -47,17 +47,18 @@ pub struct MigrateErrorState {
     pub migrated: Vec<CqlFile>,
 }
 
+#[derive(Clone)]
 pub(crate) struct MigrateArgs {
     pub cql_dir: PathBuf,
     pub history_keyspace: String,
     pub history_table: String,
 }
 
-pub(crate) async fn perform(
+pub(crate) async fn find_pending(
     session: &Session,
     cql_files: &[CqlFile],
     args: MigrateArgs,
-) -> Result<Vec<CqlFile>, MigrateError> {
+) -> Result<Vec<(CqlFile, Vec<CqlStatement>)>, MigrateError> {
     let mut previously_migrated = VecDeque::from(
         queries::migrated::files::select_all(
             session,
@@ -84,6 +85,18 @@ pub(crate) async fn perform(
         let cql = cql_file.read_statements()?;
         not_migrated.push((cql_file.clone(), cql));
     }
+
+    Ok(not_migrated)
+}
+
+pub(crate) async fn perform(
+    session: &Session,
+    cql_files: &[CqlFile],
+    args: MigrateArgs,
+) -> Result<Vec<CqlFile>, MigrateError> {
+    // TODO: args as Arc (although really all of this should probably move in to Migrator)
+    let not_migrated = find_pending(session, cql_files, args.clone()).await?;
+
     let mut migrated: Vec<CqlFile> = Vec::new();
     for (cql_file, statements) in not_migrated {
         for cql_statement in statements {
